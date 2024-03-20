@@ -1,0 +1,10 @@
+// $Id$
+// vim:ft=javascript
+
+ARG_ENABLE("pdi", "enable pdi", "no");
+
+if (PHP_PDI != "no") {
+	EXTENSION("pdi", "pdi.c");
+	AC_DEFINE('HAVE_PDI', 1 , 'whether pdi is enabled');
+	PHP_INSTALL_HEADERS("ext/pdi/", "php_pdi.h");
+}
