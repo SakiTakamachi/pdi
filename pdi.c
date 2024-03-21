@@ -244,7 +244,7 @@ static zend_result pdi_create_instance_first_time(
         for (int i = 0; i < required_num_args; i++) {
             zend_type *type = &arg_info[i].type;
             if (ZEND_TYPE_HAS_NAME(*type)) {
-                if (args && zend_hash_str_exists(args, ZSTR_VAL(arg_info[i].name), ZSTR_LEN(arg_info[i].name))) {
+                if (zend_hash_str_exists(args, ZSTR_VAL(arg_info[i].name), ZSTR_LEN(arg_info[i].name))) {
 
                 } else {
                     zend_string *arg_abstract = ZEND_TYPE_NAME(arg_info[i].type);
@@ -262,15 +262,15 @@ static zend_result pdi_create_instance_first_time(
 
                         zval arg_instance;
                         pdi_get_instance(pdi, arg_abstract, NULL, &arg_instance);
-                        zend_hash_str_add_ptr(args, ZSTR_VAL(arg_info[i].name), ZSTR_LEN(arg_info[i].name), &arg_instance);
+                        zend_hash_update(args, arg_info[i].name, &arg_instance);
+                        //zval_ptr_dtor(&arg_instance);
                     }
                 }
             }
         }
 
         zend_call_known_function(
-            constructor, Z_OBJ_P(instance), Z_OBJCE_P(instance), NULL, 0, NULL, args ?: NULL);
-
+            constructor, Z_OBJ_P(instance), Z_OBJCE_P(instance), NULL, 0, NULL, argc == 0 && count == 0 ? NULL : args);
 
         if (EG(exception)) {
             efree(concrete->args_info.args);
@@ -305,10 +305,10 @@ static zend_result pdi_create_instance_with_deps(
         uint32_t count = concrete->args_info.count;
 
         for (int i = 0; i < count; i++) {
-            if (!argc && !zend_hash_str_exists(args, ZSTR_VAL(concrete->args_info.args[i].name), ZSTR_LEN(concrete->args_info.args[i].name))) {
-                zval *arg_instance;
-                pdi_get_instance(pdi, concrete->args_info.args[i].abstract, NULL, arg_instance);
-                zend_hash_str_add_ptr(args, ZSTR_VAL(concrete->args_info.args[i].name), ZSTR_LEN(concrete->args_info.args[i].name), arg_instance);
+            if (!zend_hash_str_exists(args, ZSTR_VAL(concrete->args_info.args[i].name), ZSTR_LEN(concrete->args_info.args[i].name))) {
+                zval arg_instance;
+                pdi_get_instance(pdi, concrete->args_info.args[i].abstract, NULL, &arg_instance);
+                zend_hash_update(args, concrete->args_info.args[i].name, &arg_instance);
             }
         }
 
@@ -338,8 +338,9 @@ static zend_result pdi_create_instance(pdi_object_t *pdi, pdi_concrete_t *concre
 	if (UNEXPECTED(object_init_ex(instance, concrete->ce) != SUCCESS)) {
 		return FAILURE;
 	}
+
     PDI_GET_CTOR(instance, ce, constructor);
-    
+
     if (constructor) {
         ALLOC_HASHTABLE(args_internal);
         zend_hash_init(args_internal, 0, NULL, ZVAL_PTR_DTOR, false);
