@@ -1,8 +1,7 @@
 /* This is a generated file, edit the .stub.php file instead.
- * Stub hash: b3efc046ecee13ee2e88e8059caffbef563063b9 */
+ * Stub hash: 50bb7408859445343d82f16338d59bfd9af0ad83 */
 
-ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_class_Pdi_container, 0, 1, Pdi, 0)
-	ZEND_ARG_TYPE_INFO(0, name, IS_STRING, 0)
+ZEND_BEGIN_ARG_INFO_EX(arginfo_class_Pdi___construct, 0, 0, 0)
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Pdi_bind, 0, 2, IS_VOID, 0)
@@ -17,28 +16,16 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Pdi_make, 0, 1, IS_OBJECT,
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, parameters, IS_ARRAY, 0, "[]")
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Pdi_swap, 0, 2, IS_VOID, 0)
-	ZEND_ARG_TYPE_INFO(0, abstract, IS_STRING, 0)
-	ZEND_ARG_TYPE_INFO(0, instance, IS_OBJECT, 0)
-ZEND_END_ARG_INFO()
-
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_class_Pdi_clearSwap, 0, 0, IS_VOID, 0)
-ZEND_END_ARG_INFO()
-
-ZEND_METHOD(Pdi, container);
+ZEND_METHOD(Pdi, __construct);
 ZEND_METHOD(Pdi, bind);
 ZEND_METHOD(Pdi, singleton);
 ZEND_METHOD(Pdi, make);
-ZEND_METHOD(Pdi, swap);
-ZEND_METHOD(Pdi, clearSwap);
 
 static const zend_function_entry class_Pdi_methods[] = {
-	ZEND_ME(Pdi, container, arginfo_class_Pdi_container, ZEND_ACC_PUBLIC|ZEND_ACC_STATIC)
+	ZEND_ME(Pdi, __construct, arginfo_class_Pdi___construct, ZEND_ACC_PUBLIC)
 	ZEND_ME(Pdi, bind, arginfo_class_Pdi_bind, ZEND_ACC_PUBLIC)
 	ZEND_ME(Pdi, singleton, arginfo_class_Pdi_singleton, ZEND_ACC_PUBLIC)
 	ZEND_ME(Pdi, make, arginfo_class_Pdi_make, ZEND_ACC_PUBLIC)
-	ZEND_ME(Pdi, swap, arginfo_class_Pdi_swap, ZEND_ACC_PUBLIC)
-	ZEND_ME(Pdi, clearSwap, arginfo_class_Pdi_clearSwap, ZEND_ACC_PUBLIC)
 	ZEND_FE_END
 };
 

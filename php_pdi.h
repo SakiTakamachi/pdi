@@ -14,18 +14,21 @@ PHP_MSHUTDOWN_FUNCTION(pdi);
 PHP_MINFO_FUNCTION(pdi);
 
 typedef struct _pdi_args_t {
-	const zend_string *name;
-    const zend_string *abstract;
+	zend_string *name;
+    zend_string *abstract;
 } pdi_args_t;
 
-#define PDI_IS_FUNCTION(c)  (c->func != NULL)
-#define PDI_IS_SINGLETON(c) (c->is_singleton)
-#define PDI_IS_CREATED(c)   (c->is_created)
+#define PDI_IS_FUNCTION(c)   (c->func != NULL)
+#define PDI_IS_SINGLETON(c)  (c->is_singleton)
+#define PDI_IS_CREATED(c)    (c->is_created)
+#define PDI_IS_FIRST_TIME(c) (!PDI_IS_CREATED(c))
+#define PDI_HAS_CTOR(c)      (PDI_IS_CREATED(c) && c->has_ctor)
 
 #define PDI_INIT_CONCRETE(c,ce,fn,s) do { \
     c = emalloc(sizeof(pdi_concrete_t)); \
     c->ce = ce; \
     c->func = fn; \
+    c->has_ctor = NULL; \
     c->is_created = false; \
     c->is_singleton = s; \
     c->args_info.count = 0; \
@@ -39,6 +42,7 @@ typedef struct _pdi_concrete_t {
         uint32_t count;
         pdi_args_t *args;
     } args_info;
+    bool has_ctor;
     bool is_created;
     bool is_singleton;
 } pdi_concrete_t;
@@ -58,6 +62,12 @@ typedef struct _pdi_object_t {
 #define PDI_REGISTER_SINGLETON(pdi,a,c) zend_hash_str_add_ptr(pdi->singletons, ZSTR_VAL(a), ZSTR_LEN(a), c)
 
 #define PDI_GET_CONCRETE(pdi,a) zend_hash_str_find_ptr(pdi->concretes, ZSTR_VAL(a), ZSTR_LEN(a))
-#define PDI_GET_SINGLETON(pdi,a) zend_hash_str_find_ptr(pdi->singletons, ZSTR_VAL(a), ZSTR_LEN(a))
+
+#define PDI_IS_BOUND_ABSTRACT(pdi,a) zend_hash_str_exists(pdi->concretes, ZSTR_VAL(a), ZSTR_LEN(a))
+
+#define PDI_THROW_ERROR_HAS_ARGS_WHEN_NO_CTOR(ce) do { \
+    zend_throw_exception_ex( \
+        pdi_exception_ce, 0, "Class %s does not have a constructor, so you cannot pass any constructor arguments", ZSTR_VAL(ce->name)); \
+} while(0)
 
 #endif
