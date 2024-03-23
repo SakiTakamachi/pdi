@@ -280,9 +280,11 @@ static void pdi_create_args_first_time(pdi_object_t *pdi, pdi_concrete_t *concre
 			efree(pdi_args);
 
 			if (!zend_hash_str_exists(args, ZSTR_VAL(arg_info[i].name), ZSTR_LEN(arg_info[i].name))) {
-				zval *arg_instance = pdi_get_instance(pdi, arg_abstract, NULL);
-				if (EXPECTED(arg_instance != NULL)) {
-					zend_hash_update(args, arg_info[i].name, arg_instance);
+				zval *tmp = pdi_get_instance(pdi, arg_abstract, NULL);
+				if (EXPECTED(tmp != NULL)) {
+					zval arg_instance;
+					ZVAL_OBJ(&arg_instance, Z_OBJ_P(tmp));
+					zend_hash_update(args, arg_info[i].name, &arg_instance);
 				}
 			}
 		}
@@ -332,9 +334,12 @@ static zval *pdi_create_instance(pdi_object_t *pdi, pdi_concrete_t *concrete, ze
 			uint32_t count = concrete->args_info.count;
 			for (uint32_t i = 0; i < count; i++) {
 				if (!zend_hash_str_exists(internal_args, ZSTR_VAL(concrete->args_info.args[i].name), ZSTR_LEN(concrete->args_info.args[i].name))) {
-					zval *arg_instance = pdi_get_instance(pdi, concrete->args_info.args[i].abstract, NULL);
-					if (EXPECTED(arg_instance != NULL)) {
-						zend_hash_update(internal_args, concrete->args_info.args[i].name, arg_instance);
+					zval *tmp = pdi_get_instance(pdi, concrete->args_info.args[i].abstract, NULL);
+
+					if (EXPECTED(tmp != NULL)) {
+						zval arg_instance;
+						ZVAL_OBJ(&arg_instance, Z_OBJ_P(tmp));
+						zend_hash_update(internal_args, concrete->args_info.args[i].name, &arg_instance);
 						internal_argc++;
 					}
 				}
@@ -352,8 +357,8 @@ static zval *pdi_create_instance(pdi_object_t *pdi, pdi_concrete_t *concrete, ze
 			concrete->args_info.count = dependency_count;
 		}
 
-		//zend_hash_destroy(internal_args);
-		//FREE_HASHTABLE(internal_args);
+		zend_hash_destroy(internal_args);
+		FREE_HASHTABLE(internal_args);
 	} else if (args && UNEXPECTED(argc > 0)) {
 		zend_throw_exception_ex(
 			pdi_exception_ce, 0, "Class %s does not have a constructor, so you cannot pass any constructor arguments", ZSTR_VAL(ce->name));
