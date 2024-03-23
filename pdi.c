@@ -313,7 +313,7 @@ static zval *pdi_create_instance(pdi_object_t *pdi, pdi_concrete_t *concrete, ze
 		zend_class_entry *old_scope;
 		zend_function *constructor;
 		HashTable *internal_args = NULL;
-		uint32_t internal_argc = argc + 1;
+		uint32_t internal_argc = argc;
 		uint32_t dependency_count = 0;
 
 		// TODO: check if this is correct
@@ -329,10 +329,41 @@ static zval *pdi_create_instance(pdi_object_t *pdi, pdi_concrete_t *concrete, ze
 		}
 
 		if (PDI_IS_FIRST_TIME(concrete)) {
-			pdi_create_args_first_time(pdi, concrete, constructor, internal_args);
+			zend_arg_info *arg_info = constructor->common.arg_info;
+
+			size_t pdi_args_size = sizeof(pdi_args_t);
+			concrete->args_info.args = emalloc(pdi_args_size);
+			uint32_t count = 0;
+
+			for (int i = 0; i < constructor->common.required_num_args; i++) {
+				zend_type *type = &arg_info[i].type;
+				if (ZEND_TYPE_HAS_NAME(*type) && !ZEND_TYPE_ALLOW_NULL(*type)) {
+					zend_string *arg_abstract = ZEND_TYPE_NAME(arg_info[i].type);
+					count++;
+					uint32_t index = count - 1;
+
+					pdi_args_t *pdi_args = emalloc(pdi_args_size);
+					pdi_args->name = arg_info[i].name;
+					pdi_args->abstract = arg_abstract;
+
+					concrete->args_info.args = (pdi_args_t*) erealloc(concrete->args_info.args, pdi_args_size*count);
+					memcpy(&concrete->args_info.args[index], pdi_args, pdi_args_size);
+					efree(pdi_args);
+
+					if (!zend_hash_str_exists(internal_args, ZSTR_VAL(arg_info[i].name), ZSTR_LEN(arg_info[i].name))) {
+						zval *tmp = pdi_get_instance(pdi, arg_abstract, NULL);
+						if (EXPECTED(tmp != NULL)) {
+							zval arg_instance;
+							ZVAL_OBJ(&arg_instance, Z_OBJ_P(tmp));
+							zend_hash_update(internal_args, arg_info[i].name, &arg_instance);
+							internal_argc++;
+						}
+					}
+				}
+			}
+			concrete->args_info.count = count;
 		} else {
-			uint32_t count = concrete->args_info.count;
-			for (uint32_t i = 0; i < count; i++) {
+			for (uint32_t i = 0; i < concrete->args_info.count; i++) {
 				if (!zend_hash_str_exists(internal_args, ZSTR_VAL(concrete->args_info.args[i].name), ZSTR_LEN(concrete->args_info.args[i].name))) {
 					zval *tmp = pdi_get_instance(pdi, concrete->args_info.args[i].abstract, NULL);
 
