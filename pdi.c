@@ -350,13 +350,10 @@ static zval *pdi_create_instance(pdi_object_t *pdi, pdi_concrete_t *concrete, ze
 
 		if (PDI_IS_FIRST_TIME(concrete)) {
 			concrete->args_info.count = dependency_count;
-			if (concrete->is_singleton) {
-				zend_hash_update(pdi->singletons, abstract, instance);
-			}
 		}
 
-		zend_hash_destroy(internal_args);
-		FREE_HASHTABLE(internal_args);
+		//zend_hash_destroy(internal_args);
+		//FREE_HASHTABLE(internal_args);
 	} else if (args && UNEXPECTED(argc > 0)) {
 		zend_throw_exception_ex(
 			pdi_exception_ce, 0, "Class %s does not have a constructor, so you cannot pass any constructor arguments", ZSTR_VAL(ce->name));
@@ -364,6 +361,10 @@ static zval *pdi_create_instance(pdi_object_t *pdi, pdi_concrete_t *concrete, ze
 	}
 
 	if (PDI_IS_FIRST_TIME(concrete)) {
+		if (concrete->is_singleton) {
+			GC_ADDREF(Z_OBJ_P(instance));
+			zend_hash_update(pdi->singletons, abstract, instance);
+		}
 		concrete->is_created = true;
 	}
 
