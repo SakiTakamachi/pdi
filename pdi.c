@@ -68,13 +68,18 @@ PHP_MINFO_FUNCTION(pdi)
 }
 /* }}} */
 
-static void pdi_concretes_dtor(zval *zv)
+static void pdi_concretes_dtor(pdi_concrete_t *concrete)
 {
-	pdi_concrete_t *concrete = (pdi_concrete_t*) Z_PTR_P(zv);
 	if (concrete->args_info.args) {
 		efree(concrete->args_info.args);
 	}
 	efree(concrete);
+}
+
+static void pdi_concretes_dtor_from_zval(zval *zv)
+{
+	pdi_concrete_t *concrete = (pdi_concrete_t*) Z_PTR_P(zv);
+	pdi_concretes_dtor(concrete);
 }
 
 static zend_object *pdi_create_object(zend_class_entry *ce)
@@ -90,7 +95,7 @@ static zend_object *pdi_create_object(zend_class_entry *ce)
 	ALLOC_HASHTABLE(pdi->singletons);
 	//ALLOC_HASHTABLE(pdi->swaps);
 
-	zend_hash_init(pdi->concretes, 0, NULL, pdi_concretes_dtor, false);
+	zend_hash_init(pdi->concretes, 0, NULL, pdi_concretes_dtor_from_zval, false);
 	zend_hash_init(pdi->singletons, 0, NULL, ZVAL_PTR_DTOR, false);
 	//zend_hash_init(pdi->swaps, 0, NULL, ZVAL_PTR_DTOR, false);
 
@@ -150,68 +155,67 @@ PHP_METHOD(Pdi, __construct)
 	ZEND_PARSE_PARAMETERS_NONE();
 }
 
-static void pdi_register_concrete_ex(
-	pdi_object_t *pdi, zend_string *abstract, zend_object *concrete_func, zend_string *concrete_str, bool is_singleton)
-{
-	zend_class_entry *ce = NULL;
-
-	if (PDI_IS_BOUND_ABSTRACT(pdi, abstract)) {
-		zend_throw_exception_ex(pdi_exception_ce, 0, "($abstract) \"%s\" is already bound.", ZSTR_VAL(concrete_str));
-		return;
-	}
-
-	if (concrete_str && UNEXPECTED((ce = zend_lookup_class(concrete_str)) == NULL))  {
-		if (!EG(exception)) {
-			zend_throw_exception_ex(pdi_exception_ce, 0, "Class \"%s\" does not exist", ZSTR_VAL(concrete_str));
-		}
-		return;
-	}
-
-	pdi_concrete_t *concrete;
-	PDI_INIT_CONCRETE(concrete, ce, concrete_func, is_singleton);
-	PDI_REGISTER_CONCRETE(pdi, abstract, concrete);
-}
-
-static zend_result pdi_register_concrete_auto(pdi_object_t *pdi, zend_string *concrete_str)
+static pdi_concrete_t *pdi_auto_bind(pdi_object_t *pdi, zend_string *concrete_str)
 {
 	zend_class_entry *ce = NULL;
 
 	if (UNEXPECTED((ce = zend_lookup_class(concrete_str)) == NULL))  {
-		return FAILURE;
+		if (!EG(exception)) {
+			zend_throw_exception_ex(pdi_exception_ce, 0, "Class \"%s\" does not exist", ZSTR_VAL(concrete_str));
+		}
+		return NULL;
 	}
 
-	if (ce->ce_flags & (ZEND_ACC_INTERFACE | ZEND_ACC_TRAIT | ZEND_ACC_EXPLICIT_ABSTRACT_CLASS | ZEND_ACC_IMPLICIT_ABSTRACT_CLASS | ZEND_ACC_ENUM)) {
-		return FAILURE;
-	}
+	pdi_concrete_t *concrete = emalloc(sizeof(pdi_concrete_t));
+	concrete->ce = ce;
+	concrete->func = NULL;
+	concrete->is_created = false;
+	concrete->is_singleton = false;
+	concrete->args_info.count = 0;
+	concrete->args_info.args = NULL;
 
-	if (!ce->constructor || ce->constructor->common.fn_flags & ZEND_ACC_PUBLIC) {
-		goto register_concrete;
-	}
+	zend_hash_str_add_ptr(pdi->concretes, ZSTR_VAL(concrete_str), ZSTR_LEN(concrete_str), concrete);
 
-	return FAILURE;
-
-register_concrete:;
-	pdi_concrete_t *concrete;
-	PDI_INIT_CONCRETE(concrete, ce, NULL, false);
-	PDI_REGISTER_CONCRETE(pdi, concrete_str, concrete);
-	return SUCCESS;
+	return concrete;
 }
 
 static void pdi_bind(INTERNAL_FUNCTION_PARAMETERS, bool is_singleton)
 {
 	zend_string *abstract, *concrete_str = NULL;
 	zend_object *concrete_func = NULL;
+	zend_class_entry *ce = NULL;
 
 	ZEND_PARSE_PARAMETERS_START(2, 2)
 		Z_PARAM_STR(abstract)
 		Z_PARAM_OBJ_OR_STR(concrete_func, concrete_str)
 	ZEND_PARSE_PARAMETERS_END();
 
+	if (concrete_str && UNEXPECTED((ce = zend_lookup_class(concrete_str)) == NULL))  {
+		if (!EG(exception)) {
+			zend_throw_exception_ex(pdi_exception_ce, 0, "Class \"%s\" does not exist", ZSTR_VAL(concrete_str));
+		}
+		RETURN_THROWS();
+	}
+
 	pdi_object_t *pdi = PDI_FROM_ZVAL(ZEND_THIS);
-	
-	pdi_register_concrete_ex(pdi, abstract, concrete_func, concrete_str, is_singleton);
-	
-	if (EG(exception)) {
+	pdi_concrete_t *concrete = emalloc(sizeof(pdi_concrete_t));
+	concrete->ce = ce;
+	concrete->func = concrete_func;
+	concrete->is_created = false;
+	concrete->is_singleton = is_singleton;
+	concrete->args_info.count = 0;
+	concrete->args_info.args = NULL;
+
+	pdi_concrete_t *old = zend_hash_str_find_ptr(pdi->concretes, ZSTR_VAL(abstract), ZSTR_LEN(abstract));
+
+	if (old == NULL) {
+		zend_hash_str_add_ptr(pdi->concretes, ZSTR_VAL(abstract), ZSTR_LEN(abstract), concrete);
+	} else {
+		zend_hash_str_update_ptr(pdi->concretes, ZSTR_VAL(abstract), ZSTR_LEN(abstract), concrete);
+		pdi_concretes_dtor(old);
+	}
+
+	if (UNEXPECTED(EG(exception))) {
 		RETURN_THROWS();
 	}
 }
@@ -226,198 +230,150 @@ PHP_METHOD(Pdi, singleton)
 	pdi_bind(INTERNAL_FUNCTION_PARAM_PASSTHRU, true);
 }
 
-#define PDI_GET_CTOR(ins,ce,ctor) do { \
-	zend_class_entry *old_scope; \
-	old_scope = EG(fake_scope); \
-	EG(fake_scope) = ce; \
-	ctor = Z_OBJ_HT_P(ins)->get_constructor(Z_OBJ_P(ins)); \
-	EG(fake_scope) = old_scope; \
-} while (0)
+static zval *pdi_create_instance(pdi_object_t *pdi, pdi_concrete_t *concrete, zend_string *abstract, HashTable *args);
 
-static zend_result pdi_create_instance(pdi_object_t *pdi, pdi_concrete_t *concrete, zend_string *abstract, HashTable *args, zval *instance);
-
-static zend_result pdi_get_singleton(pdi_object_t *pdi, zend_string *abstract, zval *instance)
+static zval *pdi_get_singleton(pdi_object_t *pdi, zend_string *abstract)
 {
-    zval *obj = zend_hash_find_known_hash(pdi->singletons, abstract);
-    ZVAL_OBJ(instance, Z_OBJ_P(obj));
-	return SUCCESS;
+	zval *obj = zend_hash_find_known_hash(pdi->singletons, abstract);
+	ZEND_ASSERT(obj != NULL);
+	return obj;
 }
 
-static zend_result pdi_get_instance(pdi_object_t *pdi, zend_string *abstract, HashTable *args, zval *instance)
+static zval *pdi_get_instance(pdi_object_t *pdi, zend_string *abstract, HashTable *args)
 {
-	pdi_concrete_t *concrete;
-
-retry:
-	concrete = PDI_GET_CONCRETE(pdi, abstract);
+	pdi_concrete_t *concrete = zend_hash_str_find_ptr(pdi->concretes, ZSTR_VAL(abstract), ZSTR_LEN(abstract));
 
 	if (concrete == NULL) {
-		if (pdi_register_concrete_auto(pdi, abstract) == SUCCESS) {
-			goto retry;
+		concrete = pdi_auto_bind(pdi, abstract);
+		if (UNEXPECTED(concrete == NULL)) {
+			return NULL;
 		}
-		// TODO: throw exception
-		zend_throw_exception_ex(pdi_exception_ce, 0, "no concrete");
-		return FAILURE;
+	} else if (PDI_IS_CREATED(concrete) && PDI_IS_SINGLETON(concrete)) {
+		return pdi_get_singleton(pdi, abstract);
 	}
 
-	if (PDI_IS_CREATED(concrete) && PDI_IS_SINGLETON(concrete)) {
-		return pdi_get_singleton(pdi, abstract, instance);
-	}
-
-	return pdi_create_instance(pdi, concrete, abstract, args, instance);
+	return pdi_create_instance(pdi, concrete, abstract, args);
 }
 
-static zend_result pdi_create_instance_first_time(
-	pdi_object_t *pdi, pdi_concrete_t *concrete, zend_string *abstract, zval *instance, zend_function *constructor, HashTable *args, int argc)
+static void pdi_create_args_first_time(pdi_object_t *pdi, pdi_concrete_t *concrete, zend_function *constructor, HashTable *args)
 {
-	zend_class_entry *ce = concrete->ce;
+	uint32_t required_num_args = constructor->common.required_num_args;
+	zend_arg_info *arg_info = constructor->common.arg_info;
 
-	if (constructor) {
-		if (!(constructor->common.fn_flags & ZEND_ACC_PUBLIC)) {
-			zend_throw_exception_ex(pdi_exception_ce, 0, "Access to non-public constructor of class %s", ZSTR_VAL(ce->name));
-			zval_ptr_dtor(instance);
-			return FAILURE;
+	size_t pdi_args_size = sizeof(pdi_args_t);
+	concrete->args_info.args = emalloc(pdi_args_size);
+	uint32_t count = 0;
+
+	for (int i = 0; i < required_num_args; i++) {
+		zend_type *type = &arg_info[i].type;
+		if (ZEND_TYPE_HAS_NAME(*type) && !ZEND_TYPE_ALLOW_NULL(*type)) {
+			zend_string *arg_abstract = ZEND_TYPE_NAME(arg_info[i].type);
+			count++;
+			uint32_t index = count - 1;
+
+			pdi_args_t *pdi_args = emalloc(pdi_args_size);
+			pdi_args->name = arg_info[i].name;
+			pdi_args->abstract = arg_abstract;
+
+			concrete->args_info.args = (pdi_args_t*) erealloc(concrete->args_info.args, pdi_args_size*count);
+			memcpy(&concrete->args_info.args[index], pdi_args, pdi_args_size);
+			efree(pdi_args);
+
+			if (!zend_hash_str_exists(args, ZSTR_VAL(arg_info[i].name), ZSTR_LEN(arg_info[i].name))) {
+				zval *arg_instance = pdi_get_instance(pdi, arg_abstract, NULL);
+				if (EXPECTED(arg_instance != NULL)) {
+					zend_hash_update(args, arg_info[i].name, arg_instance);
+				}
+			}
+		}
+	}
+	concrete->args_info.count = count;
+}
+
+static zval *pdi_create_instance(pdi_object_t *pdi, pdi_concrete_t *concrete, zend_string *abstract, HashTable *args)
+{
+	zval zv;
+	zval *instance = &zv;
+
+	ZEND_ASSERT(concrete != NULL);
+	zend_class_entry *ce = concrete->ce;
+	uint32_t argc = 0;
+
+	if (args) {
+		argc = zend_hash_num_elements(args);
+	}
+
+	if (UNEXPECTED(object_init_ex(instance, concrete->ce) != SUCCESS)) {
+		return NULL;
+	}
+
+	if (ce->constructor) {
+		zend_class_entry *old_scope;
+		zend_function *constructor;
+		HashTable *internal_args = NULL;
+		uint32_t internal_argc = argc + 1;
+		uint32_t dependency_count = 0;
+
+		// TODO: check if this is correct
+		old_scope = EG(fake_scope);
+		EG(fake_scope) = ce;
+		constructor = Z_OBJ_HT_P(instance)->get_constructor(Z_OBJ_P(instance));
+		EG(fake_scope) = old_scope;
+
+		ALLOC_HASHTABLE(internal_args);
+		zend_hash_init(internal_args, 0, NULL, ZVAL_PTR_DTOR, false);
+		if (args) {
+			zend_hash_copy(internal_args, args, NULL);
 		}
 
-		uint32_t required_num_args = constructor->common.required_num_args;
-		zend_arg_info *arg_info = constructor->common.arg_info;
-
-		size_t pdi_args_size = sizeof(pdi_args_t);
-		concrete->args_info.args = emalloc(pdi_args_size);
-		uint32_t count = 0;
-
-		for (int i = 0; i < required_num_args; i++) {
-			zend_type *type = &arg_info[i].type;
-			if (ZEND_TYPE_HAS_NAME(*type) && !ZEND_TYPE_ALLOW_NULL(*type)) {
-				zend_string *arg_abstract = ZEND_TYPE_NAME(arg_info[i].type);
-				if (zend_hash_str_exists(pdi->concretes, ZSTR_VAL(arg_abstract), ZSTR_LEN(arg_abstract))) {
-				retry:
-					count++;
-					uint32_t index = count - 1;
-
-					pdi_args_t *pdi_args = emalloc(pdi_args_size);
-					pdi_args->name = arg_info[i].name;
-					pdi_args->abstract = arg_abstract;
-
-					concrete->args_info.args = (pdi_args_t*) erealloc(concrete->args_info.args, pdi_args_size*count);
-					memcpy(&concrete->args_info.args[index], pdi_args, pdi_args_size);
-					efree(pdi_args);
-
-					if (!zend_hash_str_exists(args, ZSTR_VAL(arg_info[i].name), ZSTR_LEN(arg_info[i].name))) {
-						zval arg_instance;
-						pdi_get_instance(pdi, arg_abstract, NULL, &arg_instance);
-						zend_hash_update(args, arg_info[i].name, &arg_instance);
+		if (PDI_IS_FIRST_TIME(concrete)) {
+			pdi_create_args_first_time(pdi, concrete, constructor, internal_args);
+		} else {
+			uint32_t count = concrete->args_info.count;
+			for (uint32_t i = 0; i < count; i++) {
+				if (!zend_hash_str_exists(internal_args, ZSTR_VAL(concrete->args_info.args[i].name), ZSTR_LEN(concrete->args_info.args[i].name))) {
+					zval *arg_instance = pdi_get_instance(pdi, concrete->args_info.args[i].abstract, NULL);
+					if (EXPECTED(arg_instance != NULL)) {
+						zend_hash_update(internal_args, concrete->args_info.args[i].name, arg_instance);
+						internal_argc++;
 					}
-				} else if (pdi_register_concrete_auto(pdi, arg_abstract) == SUCCESS) {
-					goto retry;
 				}
 			}
 		}
 
 		zend_call_known_function(
-			constructor, Z_OBJ_P(instance), Z_OBJCE_P(instance), NULL, 0, NULL, argc == 0 && count == 0 ? NULL : args);
+			constructor, Z_OBJ_P(instance), Z_OBJCE_P(instance), NULL, 0, NULL, internal_argc > 0 ? internal_args : NULL);
 
 		if (EG(exception)) {
-			efree(concrete->args_info.args);
 			zend_object_store_ctor_failed(Z_OBJ_P(instance));
 		}
 
-		concrete->is_created = true;
-		concrete->has_ctor = true;
-		concrete->args_info.count = count;
-	} else if (argc) {
-		PDI_THROW_ERROR_HAS_ARGS_WHEN_NO_CTOR(ce);
-	} else {
-		concrete->is_created = true;
-		concrete->has_ctor = false;
-	}
-
-	if (concrete->is_singleton) {
-		zend_hash_update(pdi->singletons, abstract, instance);
-	}
-
-	return SUCCESS;
-}
-
-static zend_result pdi_create_instance_with_deps(
-	pdi_object_t *pdi, pdi_concrete_t *concrete, zend_string *abstract, zval *instance, zend_function *constructor, HashTable *args, int argc)
-{
-	zend_class_entry *ce = concrete->ce;
-
-	if (constructor) {
-		uint32_t count = concrete->args_info.count;
-
-		for (int i = 0; i < count; i++) {
-			if (!zend_hash_str_exists(args, ZSTR_VAL(concrete->args_info.args[i].name), ZSTR_LEN(concrete->args_info.args[i].name))) {
-				zval arg_instance;
-				pdi_get_instance(pdi, concrete->args_info.args[i].abstract, NULL, &arg_instance);
-				zend_hash_update(args, concrete->args_info.args[i].name, &arg_instance);
+		if (PDI_IS_FIRST_TIME(concrete)) {
+			concrete->args_info.count = dependency_count;
+			if (concrete->is_singleton) {
+				zend_hash_update(pdi->singletons, abstract, instance);
 			}
 		}
 
-		zend_call_known_function(
-			constructor, Z_OBJ_P(instance), Z_OBJCE_P(instance), NULL, 0, NULL, args ?: NULL);
-
-		if (EG(exception)) {
-			zend_object_store_ctor_failed(Z_OBJ_P(instance));
-		}
-	} else if (argc) {
-		PDI_THROW_ERROR_HAS_ARGS_WHEN_NO_CTOR(ce);
-	}
-	
-	return SUCCESS;
-}
-
-static zend_result pdi_create_instance(pdi_object_t *pdi, pdi_concrete_t *concrete, zend_string *abstract, HashTable *args, zval *instance)
-{
-	zend_class_entry *ce = concrete->ce;
-	zend_function *constructor;
-	int argc = 0;
-	HashTable *args_internal = NULL;
-
-	if (args) {
-		argc = zend_hash_num_elements(args);
-	}
-	if (UNEXPECTED(object_init_ex(instance, concrete->ce) != SUCCESS)) {
-		return FAILURE;
-	}
-
-	PDI_GET_CTOR(instance, ce, constructor);
-
-	if (constructor) {
-		ALLOC_HASHTABLE(args_internal);
-		zend_hash_init(args_internal, 0, NULL, ZVAL_PTR_DTOR, false);
-		if (args) {
-			zend_hash_copy(args_internal, args, NULL);
-		}
+		zend_hash_destroy(internal_args);
+		FREE_HASHTABLE(internal_args);
+	} else if (args && UNEXPECTED(argc > 0)) {
+		zend_throw_exception_ex(
+			pdi_exception_ce, 0, "Class %s does not have a constructor, so you cannot pass any constructor arguments", ZSTR_VAL(ce->name));
+		return NULL;
 	}
 
 	if (PDI_IS_FIRST_TIME(concrete)) {
-		pdi_create_instance_first_time(pdi, concrete, abstract, instance, constructor, args_internal, argc);
-		goto end;
+		concrete->is_created = true;
 	}
 
-	if (PDI_HAS_CTOR(concrete)) {
-		pdi_create_instance_with_deps(pdi, concrete, abstract, instance, constructor, args_internal, argc);
-		goto end;
-	} else if (argc) {
-		zend_throw_exception_ex(
-			pdi_exception_ce, 0, "Class %s does not have a constructor, so you cannot pass any constructor arguments", ZSTR_VAL(ce->name));
-	}
-
-end:
-	if (constructor) {
-		zend_hash_destroy(args_internal);
-		FREE_HASHTABLE(args_internal);
-	}
-
-	return SUCCESS;
+	return instance;
 }
 
 PHP_METHOD(Pdi, make)
 {
 	zend_string *abstract;
 	HashTable *args = NULL;
-	zval *instance;
 
 	ZEND_PARSE_PARAMETERS_START(1, 2)
 		Z_PARAM_STR(abstract)
@@ -426,14 +382,16 @@ PHP_METHOD(Pdi, make)
 	ZEND_PARSE_PARAMETERS_END();
 
 	pdi_object_t *pdi = PDI_FROM_ZVAL(ZEND_THIS);
-	
-	if (pdi_get_instance(pdi, abstract, args, return_value) == FAILURE) {
-		zend_throw_exception_ex(pdi_exception_ce, 0, "no instance");
+	zval *instance = pdi_get_instance(pdi, abstract, args);
+	if (UNEXPECTED(instance == NULL && !EG(exception))) {
+		zend_throw_exception_ex(pdi_exception_ce, 0, "Unknown error. Could not create instance.");
 	}
 
-	if (EG(exception)) {
+	if (UNEXPECTED(EG(exception))) {
 		RETURN_THROWS();
 	}
+
+	ZVAL_OBJ(return_value, Z_OBJ_P(instance));
 }
 
 ZEND_GET_MODULE(pdi)
