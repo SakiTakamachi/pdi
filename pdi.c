@@ -245,9 +245,15 @@ static zend_result pdi_get_singleton(pdi_object_t *pdi, zend_string *abstract, z
 
 static zend_result pdi_get_instance(pdi_object_t *pdi, zend_string *abstract, HashTable *args, zval *instance)
 {
-	pdi_concrete_t *concrete = PDI_GET_CONCRETE(pdi, abstract);
+	pdi_concrete_t *concrete;
+
+retry:
+	concrete = PDI_GET_CONCRETE(pdi, abstract);
 
 	if (concrete == NULL) {
+		if (pdi_register_concrete_auto(pdi, abstract) == SUCCESS) {
+			goto retry;
+		}
 		// TODO: throw exception
 		zend_throw_exception_ex(pdi_exception_ce, 0, "no concrete");
 		return FAILURE;
