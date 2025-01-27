@@ -4,6 +4,7 @@
 #endif
 
 #include "php.h"
+#include "zend_closures.h"
 
 #ifdef HAVE_PDI
 
@@ -208,9 +209,9 @@ static void pdi_bind(INTERNAL_FUNCTION_PARAMETERS, bool is_singleton)
 	ZEND_PARSE_PARAMETERS_END();
 
 	pdi_object_t *pdi = PDI_FROM_ZVAL(ZEND_THIS);
-	
+
 	pdi_register_concrete_ex(pdi, abstract, concrete_func, concrete_str, is_singleton);
-	
+
 	if (EG(exception)) {
 		RETURN_THROWS();
 	}
@@ -363,7 +364,7 @@ static zend_result pdi_create_instance_with_deps(
 	} else if (argc) {
 		PDI_THROW_ERROR_HAS_ARGS_WHEN_NO_CTOR(ce);
 	}
-	
+
 	return SUCCESS;
 }
 
@@ -377,6 +378,21 @@ static zend_result pdi_create_instance(pdi_object_t *pdi, pdi_concrete_t *concre
 	if (args) {
 		argc = zend_hash_num_elements(args);
 	}
+
+	if (concrete->func != NULL) {
+		zend_function *closure = zend_get_closure_invoke_method(concrete->func);
+		uint32_t closure_req_num_args = closure->common.required_num_args;
+
+		zval pdi_instance;
+		ZVAL_OBJ_COPY(&pdi_instance, &(pdi->std));
+
+		zval params[] = { pdi_instance };
+
+		zend_call_known_function(closure, concrete->func, NULL, instance, 1, params, NULL);
+
+		return SUCCESS;
+	}
+
 	if (UNEXPECTED(object_init_ex(instance, concrete->ce) != SUCCESS)) {
 		return FAILURE;
 	}
@@ -426,7 +442,7 @@ PHP_METHOD(Pdi, make)
 	ZEND_PARSE_PARAMETERS_END();
 
 	pdi_object_t *pdi = PDI_FROM_ZVAL(ZEND_THIS);
-	
+
 	if (pdi_get_instance(pdi, abstract, args, return_value) == FAILURE) {
 		zend_throw_exception_ex(pdi_exception_ce, 0, "no instance");
 	}
